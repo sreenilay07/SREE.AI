@@ -1,20 +1,24 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Stock Analysis App
 
-# Run and deploy your AI Studio app
+A real-time stock analysis application built with React, TypeScript, and Gemini AI.
 
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/1DIQaf-nKFhst6B_GUdkFU0X9Gzbb5gw7
+## Features
+- **Real-time Stock Data**: View live price updates and charts.
+- **AI Analysis**: Get instant "Buy", "Hold", or "Sell" verdicts powered by Gemini.
+- **Technical Indicators**: Visualizes key metrics like RSI, MACD, and Moving Averages.
+- **News Integration**: Stays updated with the latest market news.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+   ```bash
+   npm install
+   ```
+2. Set up environment variables:
+   Create a `.env.local` file and add your `GEMINI_API_KEY`.
 3. Run the app:
-   `npm run dev`
+   ```bash
+   npm run dev
+   ```
