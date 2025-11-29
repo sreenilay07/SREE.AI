@@ -5,7 +5,6 @@ A real-time stock analysis application built with React, TypeScript, and Gemini 
 ## Features
 - **Real-time Stock Data**: View live price updates and charts.
 - **AI Analysis**: Get instant "Buy", "Hold", or "Sell" verdicts powered by Gemini.
-- **Technical Indicators**: Visualizes key metrics like RSI, MACD, and Moving Averages.
 - **News Integration**: Stays updated with the latest market news.
 
 ## Run Locally
