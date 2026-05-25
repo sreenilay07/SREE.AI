@@ -5,11 +5,130 @@ import fs from 'fs';
 import path from 'path';
 import Papa from 'papaparse';
 import Groq from 'groq-sdk';
-import YahooFinance from 'yahoo-finance2';
-const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
+// Custom RapidAPI Yahoo Finance Wrapper to bypass Render blocks
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '81b8ef09bcmsh3f7bf281caff973p1514ccjsnf969da460eff';
+const RAPIDAPI_HOST = 'yahoo-finance-real-time1.p.rapidapi.com';
 
 // Load environment variables
 dotenv.config();
+
+const yahooFinance = {
+  quote: async (symbol) => {
+    try {
+      const cleanSymbol = symbol.toUpperCase();
+      const res = await fetch(`https://${RAPIDAPI_HOST}/market/get-quotes?symbols=${encodeURIComponent(cleanSymbol)}&region=IN`, {
+        headers: {
+          'X-RapidAPI-Key': RAPIDAPI_KEY,
+          'X-RapidAPI-Host': RAPIDAPI_HOST
+        }
+      });
+      if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+      const data = await res.json();
+      const result = data?.quoteResponse?.result?.[0];
+      if (!result) throw new Error('No quote result found');
+      
+      // Ensure key names match exactly what yahoo-finance2 returned
+      return {
+        regularMarketPrice: result.regularMarketPrice || 0,
+        regularMarketOpen: result.regularMarketOpen || 0,
+        regularMarketPreviousClose: result.regularMarketPreviousClose || 0,
+        regularMarketVolume: result.regularMarketVolume || 0,
+        regularMarketChange: result.regularMarketChange || 0,
+        regularMarketChangePercent: result.regularMarketChangePercent || 0,
+        fiftyTwoWeekHigh: result.fiftyTwoWeekHigh || 0,
+        fiftyTwoWeekLow: result.fiftyTwoWeekLow || 0,
+        trailingPE: result.trailingPE || result.forwardPE || 0,
+        marketCap: result.marketCap || 0,
+        priceToBook: result.priceToBook || 0,
+        longName: result.longName || result.shortName || symbol,
+        shortName: result.shortName || symbol,
+        dividendYield: result.trailingAnnualDividendYield ? result.trailingAnnualDividendYield * 100 : 0,
+        trailingAnnualDividendYield: result.trailingAnnualDividendYield || 0,
+        sector: result.sector || 'General'
+      };
+    } catch (e) {
+      console.error(`[RapidAPI Quote Error] ${symbol}:`, e.message);
+      throw e;
+    }
+  },
+
+  quoteSummary: async (symbol, options) => {
+    try {
+      const cleanSymbol = symbol.toUpperCase();
+      
+      // Fetch statistics for insider holdings and book value
+      const statsPromise = fetch(`https://${RAPIDAPI_HOST}/stock/get-statistics?symbol=${encodeURIComponent(cleanSymbol)}&region=IN`, {
+        headers: {
+          'X-RapidAPI-Key': RAPIDAPI_KEY,
+          'X-RapidAPI-Host': RAPIDAPI_HOST
+        }
+      }).then(r => r.ok ? r.json() : null).catch(() => null);
+
+      // Fetch quote summary for basic elements
+      const summaryPromise = fetch(`https://${RAPIDAPI_HOST}/stock/get-quote-summary?symbol=${encodeURIComponent(cleanSymbol)}&modules=summaryDetail&region=IN`, {
+        headers: {
+          'X-RapidAPI-Key': RAPIDAPI_KEY,
+          'X-RapidAPI-Host': RAPIDAPI_HOST
+        }
+      }).then(r => r.ok ? r.json() : null).catch(() => null);
+
+      const [statsData, summaryData] = await Promise.all([statsPromise, summaryPromise]);
+
+      const stats = statsData?.defaultKeyStatistics || {};
+      const summaryResult = summaryData?.quoteSummary?.result?.[0] || {};
+      const summaryDetail = summaryResult.summaryDetail || {};
+
+      // Map to return exact structures expected by server.js
+      return {
+        financialData: {
+          returnOnEquity: 0, // Fallback calibrated metrics will generate this since FMP/Yahoo restricts ROE
+          debtToEquity: 0
+        },
+        defaultKeyStatistics: {
+          heldPercentInsiders: (stats.heldPercentInsiders?.raw ?? stats.heldPercentInsiders ?? 0) * 100, // yahoo-finance2 expected percentages (e.g. 51.17 instead of 0.5117)
+          heldPercentInstitutions: (stats.heldPercentInstitutions?.raw ?? stats.heldPercentInstitutions ?? 0) * 100,
+          priceToBook: stats.priceToBook?.raw ?? stats.priceToBook ?? summaryResult.priceToBook?.raw ?? 0
+        }
+      };
+    } catch (e) {
+      console.error(`[RapidAPI QuoteSummary Error] ${symbol}:`, e.message);
+      return {
+        financialData: { returnOnEquity: 0, debtToEquity: 0 },
+        defaultKeyStatistics: { heldPercentInsiders: 0, heldPercentInstitutions: 0, priceToBook: 0 }
+      };
+    }
+  },
+
+  historical: async (symbol, options) => {
+    try {
+      const cleanSymbol = symbol.toUpperCase();
+      const res = await fetch(`https://${RAPIDAPI_HOST}/stock/get-chart?symbol=${encodeURIComponent(cleanSymbol)}&range=5y&interval=1d`, {
+        headers: {
+          'X-RapidAPI-Key': RAPIDAPI_KEY,
+          'X-RapidAPI-Host': RAPIDAPI_HOST
+        }
+      });
+      if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+      const data = await res.json();
+      const chartResult = data?.chart?.result?.[0];
+      if (!chartResult) throw new Error('No chart result found');
+
+      const timestamps = chartResult.timestamp || [];
+      const closes = chartResult.indicators?.quote?.[0]?.close || [];
+      const adjCloses = chartResult.indicators?.adjclose?.[0]?.adjclose || closes;
+
+      return timestamps.map((ts, idx) => ({
+        date: new Date(ts * 1000),
+        close: closes[idx] || 0,
+        adjClose: adjCloses[idx] || closes[idx] || 0
+      })).filter(item => item.close > 0);
+    } catch (e) {
+      console.error(`[RapidAPI Historical Error] ${symbol}:`, e.message);
+      return [];
+    }
+  }
+};
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -164,7 +283,7 @@ const fetchPeersData = async (sector, currentSymbol) => {
   const norm = normalizeSector(sector);
   const peerList = TOP_SECTOR_STOCKS[norm] || TOP_SECTOR_STOCKS['IT Services'];
   const filtered = peerList.filter(p => p.symbol.toUpperCase() !== currentSymbol.toUpperCase()).slice(0, 5);
-  
+
   const resolved = [];
   for (const peer of filtered) {
     try {
@@ -244,7 +363,7 @@ const executeGroqRequest = async (prompt, options = {}) => {
   for (const model of modelsToTry) {
     try {
       const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: prompt }];
-      
+
       const config = {
         messages,
         model,
@@ -415,7 +534,7 @@ app.get('/api/stocks/search', (req, res) => {
 
 const getCalibratedMetrics = (symbol, sector, liveData) => {
   const cleanSym = symbol.toUpperCase().replace('.NS', '').replace('.BO', '');
-  
+
   // Deterministic seed helper
   const getVal = (key, min, max) => {
     let hash = 0;
@@ -430,7 +549,7 @@ const getCalibratedMetrics = (symbol, sector, liveData) => {
   };
 
   const sec = sector || 'General';
-  
+
   // Define ranges by sector
   let peMin = 15, peMax = 25;
   let pbMin = 2.0, pbMax = 4.0;
@@ -468,7 +587,7 @@ const getCalibratedMetrics = (symbol, sector, liveData) => {
   const debtToEquity = (liveData.debtToEquity && liveData.debtToEquity > 0) ? liveData.debtToEquity : getVal('de', deMin, deMax);
   const dividendYield = (liveData.dividendYield && liveData.dividendYield > 0) ? liveData.dividendYield : getVal('div', divMin, divMax);
   const promoter = (liveData.promoter && liveData.promoter > 0) ? liveData.promoter : getVal('promo', promoMin, promoMax);
-  
+
   // Rest of shareholding
   const remaining = Math.max(0, 100 - promoter);
   const fii = parseFloat((remaining * 0.4).toFixed(2));
@@ -504,7 +623,7 @@ const getCalibratedMetrics = (symbol, sector, liveData) => {
 app.get('/api/stocks/:symbol', async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const stock = allStocks.find((s) => s.symbol === symbol);
-  
+
   const isBse = symbol.endsWith('.BO');
   const symbolWithSuffix = isBse ? symbol : (symbol.endsWith('.NS') ? symbol : `${symbol}.NS`);
   const exchange = isBse ? 'BSE' : 'NSE';
@@ -518,7 +637,7 @@ app.get('/api/stocks/:symbol', async (req, res) => {
     } catch (e) {
       console.warn("Quote failed for single symbol:", symbolWithSuffix);
     }
-    
+
     try {
       const s = await yahooFinance.quoteSummary(symbolWithSuffix, {
         modules: ['defaultKeyStatistics', 'financialData', 'summaryDetail']
@@ -532,7 +651,7 @@ app.get('/api/stocks/:symbol', async (req, res) => {
     const livePe = quote.trailingPE || quote.forwardPE || 0;
     const livePb = quote.priceToBook || (summary.defaultKeyStatistics && summary.defaultKeyStatistics.priceToBook) || 0;
     const liveDivYield = quote.dividendYield || (quote.trailingAnnualDividendYield ? quote.trailingAnnualDividendYield * 100 : 0) || 0;
-    
+
     let liveRoe = 0;
     let liveDebtToEquity = 0;
     let promoterHolding = 0;
@@ -546,7 +665,7 @@ app.get('/api/stocks/:symbol', async (req, res) => {
         liveDebtToEquity = parseFloat((dToE / 100).toFixed(2));
       }
     }
-    
+
     if (summary.defaultKeyStatistics) {
       if (summary.defaultKeyStatistics.heldPercentInsiders !== undefined) {
         promoterHolding = parseFloat((summary.defaultKeyStatistics.heldPercentInsiders * 100).toFixed(2));
@@ -554,7 +673,7 @@ app.get('/api/stocks/:symbol', async (req, res) => {
     }
 
     const sector = quote.sector || (stock ? stock.sector : 'General') || "General";
-    
+
     const calibrated = getCalibratedMetrics(symbol, sector, {
       currentPrice: livePrice,
       marketCap: quote.marketCap ? `₹${(quote.marketCap / 10000000).toFixed(2)} Cr` : "N/A",
@@ -630,10 +749,10 @@ app.post('/api/stocks/batch', async (req, res) => {
     const results = await Promise.all(formattedSymbols.map(async (symWithSuffix) => {
       const baseSym = symWithSuffix.replace('.NS', '').replace('.BO', '');
       const match = allStocks.find(s => s.symbol === symWithSuffix || s.symbol === baseSym);
-      
+
       let quote = {};
       let summary = {};
-      
+
       try {
         const q = await yahooFinance.quote(symWithSuffix);
         if (q) quote = q;
@@ -655,7 +774,7 @@ app.post('/api/stocks/batch', async (req, res) => {
       const livePe = quote.trailingPE || quote.forwardPE || 0;
       const livePb = quote.priceToBook || (summary.defaultKeyStatistics && summary.defaultKeyStatistics.priceToBook) || 0;
       const liveDivYield = quote.dividendYield || (quote.trailingAnnualDividendYield ? quote.trailingAnnualDividendYield * 100 : 0) || 0;
-      
+
       let liveRoe = 0;
       let liveDebtToEquity = 0;
       let promoterHolding = 0;
@@ -669,7 +788,7 @@ app.post('/api/stocks/batch', async (req, res) => {
           liveDebtToEquity = parseFloat((dToE / 100).toFixed(2));
         }
       }
-      
+
       if (summary.defaultKeyStatistics) {
         if (summary.defaultKeyStatistics.heldPercentInsiders !== undefined) {
           promoterHolding = parseFloat((summary.defaultKeyStatistics.heldPercentInsiders * 100).toFixed(2));
@@ -677,7 +796,7 @@ app.post('/api/stocks/batch', async (req, res) => {
       }
 
       const sector = quote.sector || (match ? match.sector : 'General') || "General";
-      
+
       const calibrated = getCalibratedMetrics(symWithSuffix, sector, {
         currentPrice: livePrice,
         marketCap: quote.marketCap ? `₹${(quote.marketCap / 10000000).toFixed(2)} Cr` : "N/A",
@@ -694,14 +813,14 @@ app.post('/api/stocks/batch', async (req, res) => {
         name: quote.longName || quote.shortName || (match ? match.name : symWithSuffix),
         exchange: isBse ? 'BSE' : 'NSE',
         currentPrice: calibrated.currentPrice,
-        open: quote.regularMarketOpen || calibrated.currentPrice * 0.99, 
-        high: quote.regularMarketDayHigh || calibrated.currentPrice * 1.015, 
-        low: quote.regularMarketDayLow || calibrated.currentPrice * 0.985, 
-        close: quote.regularMarketPreviousClose || calibrated.currentPrice, 
+        open: quote.regularMarketOpen || calibrated.currentPrice * 0.99,
+        high: quote.regularMarketDayHigh || calibrated.currentPrice * 1.015,
+        low: quote.regularMarketDayLow || calibrated.currentPrice * 0.985,
+        close: quote.regularMarketPreviousClose || calibrated.currentPrice,
         volume: quote.regularMarketVolume || 150000,
         change: quote.regularMarketChange || 0,
         changePercent: quote.regularMarketChangePercent || 0,
-        fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh || calibrated.currentPrice * 1.35, 
+        fiftyTwoWeekHigh: quote.fiftyTwoWeekHigh || calibrated.currentPrice * 1.35,
         fiftyTwoWeekLow: quote.fiftyTwoWeekLow || calibrated.currentPrice * 0.65,
         marketCap: calibrated.marketCap,
         peRatio: calibrated.peRatio,
@@ -710,7 +829,7 @@ app.post('/api/stocks/batch', async (req, res) => {
         fundamentals: calibrated.fundamentals
       };
     }));
-    
+
     return res.json(results);
   } catch (e) {
     console.error('Error fetching batch stocks:', e);
@@ -760,13 +879,13 @@ app.get('/api/term/explain', async (req, res) => {
 // Screener Query Parsing
 app.post('/api/screener/parse', async (req, res) => {
   const { query } = req.body;
-  
+
   // Local NLP rule-based parser as a reliable fallback
   const localParse = (q) => {
     const lower = (q || '').toLowerCase();
     let sector = null;
     let price_lt = null;
-    
+
     const sectorsList = ['banking', 'it services', 'pharma', 'fmcg', 'automobile', 'energy', 'metals', 'infrastructure', 'psu', 'renewable energy'];
     for (const sec of sectorsList) {
       if (lower.includes(sec)) {
@@ -782,7 +901,7 @@ app.post('/api/screener/parse', async (req, res) => {
     if (match && match[1]) {
       price_lt = parseInt(match[1]);
     }
-    
+
     return { sector, price_lt, limit: 30 };
   };
 
@@ -790,12 +909,12 @@ app.post('/api/screener/parse', async (req, res) => {
     const prompt = `Convert the natural language investment criteria query "${query}" to a JSON filter object. Valid JSON structure: { "sector": "Banking" | "IT Services" | "FMCG" | "Automobile" | "Pharma" | "Energy" | "Metals" | "Infrastructure" | "PSU" | "Renewable Energy", "price_lt": number, "limit": number }. Keep values null if not mentioned. Do not write text, return only JSON.`;
     const r = await executeGroqRequest(prompt, { temperature: 0, responseMimeType: 'application/json' });
     const criteria = JSON.parse(sanitizeJson(safeExtractText(r) || '{}'));
-    
+
     // Fallback to local parser for sector/price if JSON parser yielded empty or invalid fields
     if (!criteria.sector && !criteria.price_lt) {
       return res.json(localParse(query));
     }
-    
+
     return res.json(criteria);
   } catch (e) {
     console.warn("Groq screener parsing failed, falling back to local NLP parser:", e.message);
@@ -875,7 +994,7 @@ app.post('/api/stocks/compare', async (req, res) => {
 // Chatbot Assistant API
 app.post('/api/chat', async (req, res) => {
   const { stockData, messages, message } = req.body;
-  
+
   const systemInstruction = `You are Sree AI, a helpful and friendly chatbot assistant for the stock ${stockData.name} (${stockData.symbol}). The stock's current price is ₹${(stockData.currentPrice || 0).toFixed(2)}. Its sector is ${stockData.sector}. The 52-week high is ₹${(stockData.fiftyTwoWeekHigh || 0).toFixed(2)} and the low is ₹${(stockData.fiftyTwoWeekLow || 0).toFixed(2)}. The P/E ratio is ${stockData.peRatio || 'N/A'}. Promoter holding is ${stockData.promoterHolding ? (stockData.promoterHolding || 0).toFixed(2) + '%' : 'N/A'}. Your role is to answer user questions about this specific stock based on the data provided and general market knowledge. Be concise and clear. Explain financial terms simply if asked. You MUST NOT give direct financial advice (e.g., "you should buy this stock now"). Instead, you can provide data-driven information to help the user make their own decision. Keep the conversation strictly focused on the stock: ${stockData.name}.`;
 
   const formattedMessages = [
@@ -893,7 +1012,7 @@ app.post('/api/chat', async (req, res) => {
       messages: formattedMessages,
       temperature: 0.7
     });
-    
+
     return res.json({ text: response.choices[0]?.message?.content || '' });
   } catch (e) {
     console.error('Chat error:', e);
@@ -923,7 +1042,7 @@ app.get('/api/stocks/analysis/:symbol', async (req, res) => {
   let liveLow = 0;
   let livePe = 0;
   let liveCap = 'N/A';
-  
+
   let liveRoe = 'N/A';
   let livePb = 0;
   let liveDebtToEquity = 0;
@@ -1153,7 +1272,7 @@ app.get('/api/stocks/analysis/:symbol', async (req, res) => {
     const r = await executeGroqRequest(prompt, { responseMimeType: 'application/json' });
     const text = safeExtractText(r);
     const sanitized = sanitizeJson(text);
-    
+
     // Groq sometimes returns the JSON inside a "data" property if it got creative.
     let result = JSON.parse(sanitized);
     if (result.basicData === undefined && Object.values(result).length > 0 && Object.values(result)[0].basicData !== undefined) {
