@@ -6,7 +6,7 @@ import path from 'path';
 import Papa from 'papaparse';
 import Groq from 'groq-sdk';
 // Custom RapidAPI Yahoo Finance Wrapper to bypass Render blocks
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '962125124amsh6f7d55bb9440530p11a331jsn21416238b1bd';
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = 'yahoo-finance-real-time1.p.rapidapi.com';
 
 // Load environment variables
