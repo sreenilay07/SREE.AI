@@ -24,10 +24,10 @@ import { classifySector, SECTORS_METRIC_MAP } from './config/sectorConfig.js';
 import { getStockFundamentals } from './services/fundamentalsService.js';
 import tradingRoutes from './routes/tradingRoutes.js';
 
-// Load environment variables
-dotenv.config();
+// Environment variables are loaded via 'dotenv/config' import at line 1
 
 const app = express();
+
 const PORT = process.env.PORT || 5000;
 
 // Security Middleware (Helmet & Explicit CORS Allowlist)
