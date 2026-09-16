@@ -858,4 +858,23 @@ app.listen(PORT, () => {
   console.log(`[SERVER] Backend running on port ${PORT}`);
   const health = getTokenHealth();
   console.log(`[SERVER] Boot Token Health Check: ${health.message}`);
+
+  // Keep-alive loop to prevent Render ML service cold starts (pings every 2 minutes)
+  const mlServiceUrl = process.env.ML_SERVICE_URL || 'https://sree-ai-ml.onrender.com';
+  const TWO_MINUTES = 2 * 60 * 1000;
+
+  const pingMlService = async () => {
+    try {
+      const res = await fetch(`${mlServiceUrl}/health`);
+      if (res.ok) {
+        console.log('[KEEP-ALIVE] Pinged ML service /health successfully (2-min interval)');
+      }
+    } catch (err) {
+      console.warn('[KEEP-ALIVE] Self-ping warning:', err.message);
+    }
+  };
+
+  // Initial ping on boot + recurring interval
+  pingMlService();
+  setInterval(pingMlService, TWO_MINUTES);
 });
