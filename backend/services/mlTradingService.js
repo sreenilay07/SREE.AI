@@ -1,14 +1,16 @@
 import { resolveInstrument } from './upstoxService.js';
 import { getAccessToken } from './tokenStore.js';
 
-const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://127.0.0.1:8000';
+const getMlServiceUrl = () => (process.env.ML_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
 
 /**
  * Checks health of the Python ML Inference Service.
  */
 export async function getMlHealth() {
+  const mlUrl = getMlServiceUrl();
   try {
-    const res = await fetch(`${ML_SERVICE_URL}/health`, {
+    const res = await fetch(`${mlUrl}/health`, {
+
       method: 'GET',
       headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(5000)
@@ -75,8 +77,9 @@ export async function getStockPrediction({ symbol, instrumentKey, stockName }) {
     stockName: name
   });
 
-  const targetUrl = `${ML_SERVICE_URL}/api/predict?${queryParams.toString()}`;
-  console.log(`[ML Gateway] Requesting prediction: ${cleanSymbol} (${key}) -> ${ML_SERVICE_URL}`);
+  const mlUrl = getMlServiceUrl();
+  const targetUrl = `${mlUrl}/api/predict?${queryParams.toString()}`;
+  console.log(`[ML Gateway] Requesting prediction: ${cleanSymbol} (${key}) -> ${mlUrl}`);
 
   try {
     const res = await fetch(targetUrl, {
@@ -113,7 +116,7 @@ export async function getStockPrediction({ symbol, instrumentKey, stockName }) {
     return {
       status: 'error',
       message: 'ML_SERVICE_UNREACHABLE',
-      reason: `Failed connecting to ML service at ${ML_SERVICE_URL}: ${err.message}`,
+      reason: `Failed connecting to ML service at ${mlUrl}: ${err.message}`,
       stock: { symbol: cleanSymbol, name, instrumentKey: key },
       market: { status: 'UNKNOWN', isOpen: false, timestamp: new Date().toISOString() },
       currentPrice: 0,

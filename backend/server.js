@@ -1,10 +1,11 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+
 import Papa from 'papaparse';
 
 import { normalizeSymbol, isValidSymbol } from './utils/symbolUtils.js';
