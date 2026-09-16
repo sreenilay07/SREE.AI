@@ -13,7 +13,7 @@ export async function getMlHealth() {
 
       method: 'GET',
       headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(15000)
     });
 
     if (!res.ok) {
