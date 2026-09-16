@@ -1,0 +1,28 @@
+{
+  "stock_name": "MRF",
+  "instrument_key": "NSE_EQ|INE883A01011",
+  "lookback": 48,
+  "horizons_minutes": [
+    5,
+    10,
+    15,
+    20,
+    25,
+    30,
+    45,
+    60
+  ],
+  "base_timeframe_minutes": 5,
+  "best_model_per_horizon": {
+    "5": "GRU",
+    "10": "GRU",
+    "15": "XGBoost",
+    "20": "XGBoost",
+    "25": "GRU",
+    "30": "XGBoost",
+    "45": "XGBoost",
+    "60": "GRU"
+  },
+  "live_warmup_days": 7,
+  "confidence_minimum": 60.0
+}

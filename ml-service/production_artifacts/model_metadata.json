@@ -1,0 +1,9 @@
+{
+  "trained_at": "2026-09-16 11:32:02.566726+05:30",
+  "train_sessions": 811,
+  "val_sessions": 174,
+  "test_sessions": 174,
+  "train_samples": 12920,
+  "val_samples": 2766,
+  "test_samples": 2779
+}
